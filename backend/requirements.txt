@@ -1,43 +1,4 @@
-# FastAPI
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.18
-
-# Database (Neon Serverless PostgreSQL)
-sqlalchemy[asyncio]==2.0.36
-asyncpg==0.30.0
-alembic==1.14.0
-
-# Authentication
-pyjwt[crypto]==2.10.1
-httpx==0.28.1
-cryptography==44.0.0
-
-# Validation
-pydantic==2.10.3
-pydantic-settings==2.7.0
-email-validator==2.2.0
-
-# PDF Generation
-reportlab==4.2.5
-
-# File handling
-python-jose[cryptography]==3.3.0
-aiofiles==24.1.0
-
-# CORS & Security
-passlib[bcrypt]==1.7.4
-
-# Utils
-python-dateutil==2.9.0
-tenacity==9.0.0
-resend==2.30.1
-openai==2.36.0
-
-# Testing
-pytest==8.3.4
-pytest-asyncio==0.24.0
-httpx==0.28.1
-
-# Logging
-structlog==24.4.0
+altgraph @ file:///AppleInternal/Library/BuildRoots/4~CMzOugA1hT-4O2kZ5M4Og1VxAfLgir31_besAu0/Library/Caches/com.apple.xbs/Sources/python3/altgraph-0.17.2-py2.py3-none-any.whl
+future @ file:///AppleInternal/Library/BuildRoots/4~CMzOugA1hT-4O2kZ5M4Og1VxAfLgir31_besAu0/Library/Caches/com.apple.xbs/Sources/python3/future-0.18.2-py3-none-any.whl
+macholib @ file:///AppleInternal/Library/BuildRoots/4~CMzOugA1hT-4O2kZ5M4Og1VxAfLgir31_besAu0/Library/Caches/com.apple.xbs/Sources/python3/macholib-1.15.2-py2.py3-none-any.whl
+six @ file:///AppleInternal/Library/BuildRoots/4~CMzOugA1hT-4O2kZ5M4Og1VxAfLgir31_besAu0/Library/Caches/com.apple.xbs/Sources/python3/six-1.15.0-py2.py3-none-any.whl
