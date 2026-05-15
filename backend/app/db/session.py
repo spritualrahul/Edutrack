@@ -25,30 +25,50 @@ def _get_neon_url(url: str) -> str:
     return url
 
 
-# Neon serverless PostgreSQL requires SSL connections.
-# Pool settings are tuned for serverless: smaller pool, shorter recycle time.
-engine = create_async_engine(
-    _get_neon_url(settings.DATABASE_URL),
-    echo=settings.DATABASE_ECHO,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    connect_args={
-        "ssl": "require",
-    },
-)
-
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
-
-
 class Base(DeclarativeBase):
     """Base class for all database models."""
     pass
+
+
+# Engine and session factory — initialized lazily in init_db()
+engine = None
+AsyncSessionLocal = None
+
+
+def _create_engine():
+    """Create the async engine. Called once at startup."""
+    global engine, AsyncSessionLocal
+
+    db_url = settings.DATABASE_URL
+    if not db_url:
+        raise RuntimeError(
+            "DATABASE_URL environment variable is not set. "
+            "Add it in your Render dashboard under Environment Variables."
+        )
+
+    # Ensure correct async driver prefix
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+
+    engine = create_async_engine(
+        _get_neon_url(db_url),
+        echo=settings.DATABASE_ECHO,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args={
+            "ssl": "require",
+        },
+    )
+
+    AsyncSessionLocal = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
 
 async def get_db() -> AsyncSession:
@@ -65,11 +85,14 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Initialize database tables."""
+    """Initialize database engine and tables."""
+    _create_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def close_db():
     """Close database connections."""
-    await engine.dispose()
+    if engine:
+        await engine.dispose()
+
