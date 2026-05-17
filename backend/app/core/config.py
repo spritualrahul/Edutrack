@@ -2,7 +2,9 @@
 
 from functools import lru_cache
 from typing import List
+import json
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -22,7 +24,6 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # Database (Neon Serverless PostgreSQL)
-    # Set via .env — get connection string from https://console.neon.tech
     DATABASE_URL: str = ""
     DATABASE_ECHO: bool = False
 
@@ -38,6 +39,16 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:3001",
     ]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("["):
+                return json.loads(v)
+            return [i.strip() for i in v.split(",")]
+        return v
 
     # File Storage
     S3_BUCKET_NAME: str = ""
