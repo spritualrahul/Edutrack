@@ -4,7 +4,6 @@ from functools import lru_cache
 from typing import List
 import json
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -34,21 +33,15 @@ class Settings(BaseSettings):
     CLERK_JWKS_URL: str = "https://api.clerk.com/v1/jwks"
     CLERK_ISSUER: str = ""
 
-    # CORS
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ]
+    # CORS — stored as plain string, parsed to list via property
+    CORS_ORIGINS_STR: str = "http://localhost:3000,http://localhost:3001"
 
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v):
-        if isinstance(v, str):
-            v = v.strip()
-            if v.startswith("["):
-                return json.loads(v)
-            return [i.strip() for i in v.split(",")]
-        return v
+    @property
+    def CORS_ORIGINS(self) -> List[str]:
+        v = self.CORS_ORIGINS_STR.strip()
+        if v.startswith("["):
+            return json.loads(v)
+        return [i.strip() for i in v.split(",")]
 
     # File Storage
     S3_BUCKET_NAME: str = ""
