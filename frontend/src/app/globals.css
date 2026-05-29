@@ -16,10 +16,16 @@ body {
 ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
-/* Smooth transitions */
-* { transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
+/* Smooth transitions — targeted to interactive elements only */
+a, button, input, select, textarea,
+[role="button"], [role="tab"],
+.badge, .card, .btn,
+summary, details,
+th, td { 
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms; }
+  transition-duration: 150ms;
+}
 
 /* Focus ring */
 *:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; border-radius: 4px; }
@@ -29,17 +35,55 @@ body {
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 @keyframes dashboard-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-@keyframes id-card-swing {
-  0%, 100% { transform: rotate(-1.2deg); }
-  50% { transform: rotate(1.2deg); }
+@keyframes id-card-swing-idle {
+  0%, 100% { transform: rotate(-0.8deg); }
+  50% { transform: rotate(0.8deg); }
+}
+@keyframes id-card-swing-hover {
+  0% { transform: rotate(0deg); }
+  15% { transform: rotate(4deg); }
+  30% { transform: rotate(-3.5deg); }
+  45% { transform: rotate(2.5deg); }
+  60% { transform: rotate(-1.8deg); }
+  75% { transform: rotate(1deg); }
+  90% { transform: rotate(-0.5deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes lanyard-sway {
+  0%, 100% { transform: translateX(-50%) rotate(-0.6deg); }
+  50% { transform: translateX(-50%) rotate(0.6deg); }
 }
 
+/* ID card hanging wrapper — always gently swinging */
+.id-card-hanging {
+  transform-origin: top center;
+  animation: id-card-swing-idle 4s ease-in-out infinite;
+}
+.id-card-hanging:hover {
+  animation: id-card-swing-hover 1.8s ease-in-out;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.12));
+}
+.id-card-hanging:hover .id-card-inner {
+  transform: translateY(-2px);
+}
+
+/* Lanyard clip syncs with card sway */
+.id-card-lanyard-clip {
+  animation: lanyard-sway 4s ease-in-out infinite;
+}
+.id-card-hanging:hover .id-card-lanyard-clip {
+  animation: none;
+}
+
+/* Utility animation classes */
 .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
 .animate-slideUp { animation: slideUp 0.4s ease-out; }
 .animate-pulse-soft { animation: pulse-soft 2s ease-in-out infinite; }
 .animate-dashboard-float { animation: dashboard-float 7s ease-in-out infinite; }
+
+/* Legacy class kept for backward compat with school-admin student page */
 .student-id-card { transform-origin: top center; }
-.student-id-card:hover { animation: id-card-swing 1.5s ease-in-out infinite; }
+.student-id-card:hover { animation: id-card-swing-hover 1.8s ease-in-out; }
 
 /* Print styles for receipts */
 @media print {

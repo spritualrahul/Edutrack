@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Textarea } from "@/components/ui/input";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Badge, Avatar, EmptyState, Skeleton } from "@/components/ui/badge";
 import { apiClient } from "@/lib/api";
 import { useAuthState } from "@/hooks/useAuth";
@@ -52,6 +52,33 @@ type ExtractionResult = {
   warnings?: string[];
 };
 
+type AcademicClassOption = {
+  id: string;
+  name: string;
+  numeric_grade: number;
+  sections: { id: string; name: string }[];
+};
+
+const EMPTY_CREATE_FORM: Record<string, string> = {
+  admission_number: "",
+  first_name: "",
+  last_name: "",
+  date_of_birth: "",
+  gender: "",
+  blood_group: "",
+  class_id: "",
+  section_id: "",
+  roll_number: "",
+  email: "",
+  phone: "",
+  address: "",
+  city: "",
+  state: "",
+  pincode: "",
+  parent_name: "",
+  parent_phone: "",
+};
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (typeof error === "object" && error !== null && "response" in error) {
     const response = (error as { response?: { data?: { detail?: string } } }).response;
@@ -98,6 +125,14 @@ export default function StudentsPage() {
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
 
+  // Create student form state
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createForm, setCreateForm] = useState<Record<string, string>>({ ...EMPTY_CREATE_FORM });
+  const [creatingStudent, setCreatingStudent] = useState(false);
+  const [createMessage, setCreateMessage] = useState<string | null>(null);
+  const [classes, setClasses] = useState<AcademicClassOption[]>([]);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+
   const fetchStudents = async () => {
     if (!auth.schoolId) return;
     setLoading(true);
@@ -119,6 +154,69 @@ export default function StudentsPage() {
     return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.schoolId]);
+
+  const fetchClasses = async () => {
+    if (!auth.schoolId) return;
+    setLoadingClasses(true);
+    try {
+      const response = await apiClient.getClassesForSchool(auth.schoolId);
+      setClasses(response.data || []);
+    } catch {
+      // Silent fail - classes are optional context
+    } finally {
+      setLoadingClasses(false);
+    }
+  };
+
+  const openCreateForm = () => {
+    setShowCreateForm(true);
+    setSelectedStudent(null);
+    setEditingStudent(null);
+    setCreateForm({ ...EMPTY_CREATE_FORM });
+    setCreateMessage(null);
+    if (classes.length === 0) void fetchClasses();
+  };
+
+  const submitCreateStudent = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!auth.schoolId) return;
+    if (!createForm.admission_number || !createForm.first_name || !createForm.class_id) {
+      setError("Admission number, first name, and class are required.");
+      return;
+    }
+    setCreatingStudent(true);
+    setError(null);
+    setCreateMessage(null);
+    try {
+      const payload: Record<string, unknown> = {
+        admission_number: createForm.admission_number,
+        first_name: createForm.first_name,
+        last_name: createForm.last_name || undefined,
+        date_of_birth: createForm.date_of_birth || undefined,
+        gender: createForm.gender || undefined,
+        blood_group: createForm.blood_group || undefined,
+        class_id: createForm.class_id,
+        section_id: createForm.section_id || undefined,
+        roll_number: createForm.roll_number ? Number(createForm.roll_number) : undefined,
+        email: createForm.email || undefined,
+        phone: createForm.phone || undefined,
+        address: createForm.address || undefined,
+        city: createForm.city || undefined,
+        state: createForm.state || undefined,
+        pincode: createForm.pincode || undefined,
+      };
+      await apiClient.createStudent(auth.schoolId, payload);
+      setCreateMessage(`Student "${createForm.first_name} ${createForm.last_name || ""}" created successfully!`);
+      setCreateForm({ ...EMPTY_CREATE_FORM });
+      await fetchStudents();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not create student."));
+    } finally {
+      setCreatingStudent(false);
+    }
+  };
+
+  const selectedClassSections = classes.find((c) => c.id === createForm.class_id)?.sections || [];
 
   const filtered = useMemo(() => {
     const term = search.toLowerCase();
@@ -210,6 +308,7 @@ export default function StudentsPage() {
     <div className="space-y-6">
       {error && <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
       {importMessage && <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{importMessage}</div>}
+      {createMessage && <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{createMessage}</div>}
 
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <div className="space-y-6">
@@ -290,6 +389,7 @@ export default function StudentsPage() {
                   <Input placeholder="Search students..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 sm:w-72" />
                 </div>
                 <Button variant="outline" size="sm" onClick={() => downloadCsv("students.csv", filtered)}><Download className="h-4 w-4" /> CSV</Button>
+                <Button size="sm" onClick={openCreateForm}><GraduationCap className="h-4 w-4" /> Add Student</Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -383,10 +483,163 @@ export default function StudentsPage() {
                 </Card>
               )}
             </>
+          ) : showCreateForm ? (
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <GraduationCap className="h-5 w-5 text-indigo-600" /> Create Student
+                  </CardTitle>
+                  <CardDescription>Manually add a new student profile.</CardDescription>
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => setShowCreateForm(false)}><X className="h-4 w-4" /></Button>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={submitCreateStudent} className="space-y-4">
+                  {/* Personal Info */}
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Personal Info</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>First Name <span className="text-red-400">*</span></Label>
+                        <Input value={createForm.first_name} onChange={(e) => setCreateForm({ ...createForm, first_name: e.target.value })} placeholder="Rahul" required />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Last Name</Label>
+                        <Input value={createForm.last_name} onChange={(e) => setCreateForm({ ...createForm, last_name: e.target.value })} placeholder="Sharma" />
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Date of Birth</Label>
+                        <Input type="date" value={createForm.date_of_birth} onChange={(e) => setCreateForm({ ...createForm, date_of_birth: e.target.value })} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Gender</Label>
+                        <Select value={createForm.gender} onChange={(e) => setCreateForm({ ...createForm, gender: e.target.value })}>
+                          <option value="">Select</option>
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                          <option value="other">Other</option>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <div className="space-y-1.5">
+                        <Label>Blood Group</Label>
+                        <Select value={createForm.blood_group} onChange={(e) => setCreateForm({ ...createForm, blood_group: e.target.value })}>
+                          <option value="">Select</option>
+                          {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((bg) => (
+                            <option key={bg} value={bg}>{bg}</option>
+                          ))}
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Academic Info */}
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Academic Info</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Admission No. <span className="text-red-400">*</span></Label>
+                        <Input value={createForm.admission_number} onChange={(e) => setCreateForm({ ...createForm, admission_number: e.target.value })} placeholder="ADM-001" required />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Roll Number</Label>
+                        <Input type="number" value={createForm.roll_number} onChange={(e) => setCreateForm({ ...createForm, roll_number: e.target.value })} placeholder="1" />
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Class <span className="text-red-400">*</span></Label>
+                        <Select
+                          value={createForm.class_id}
+                          onChange={(e) => setCreateForm({ ...createForm, class_id: e.target.value, section_id: "" })}
+                          disabled={loadingClasses}
+                          required
+                        >
+                          <option value="">{loadingClasses ? "Loading..." : "Select Class"}</option>
+                          {classes.map((cls) => (
+                            <option key={cls.id} value={cls.id}>{cls.name}</option>
+                          ))}
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Section</Label>
+                        <Select
+                          value={createForm.section_id}
+                          onChange={(e) => setCreateForm({ ...createForm, section_id: e.target.value })}
+                          disabled={!createForm.class_id}
+                        >
+                          <option value="">Select Section</option>
+                          {selectedClassSections.map((sec) => (
+                            <option key={sec.id} value={sec.id}>{sec.name}</option>
+                          ))}
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contact Info */}
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Contact Info</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Email</Label>
+                        <Input type="email" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} placeholder="student@email.com" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Phone</Label>
+                        <Input value={createForm.phone} onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })} placeholder="+91 9876543210" />
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-1.5">
+                      <Label>Address</Label>
+                      <Textarea value={createForm.address} onChange={(e) => setCreateForm({ ...createForm, address: e.target.value })} placeholder="Street address" rows={2} />
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>City</Label>
+                        <Input value={createForm.city} onChange={(e) => setCreateForm({ ...createForm, city: e.target.value })} placeholder="City" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>State</Label>
+                        <Input value={createForm.state} onChange={(e) => setCreateForm({ ...createForm, state: e.target.value })} placeholder="State" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Pincode</Label>
+                        <Input value={createForm.pincode} onChange={(e) => setCreateForm({ ...createForm, pincode: e.target.value })} placeholder="110001" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Parent Info */}
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Parent / Guardian</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label>Parent Name</Label>
+                        <Input value={createForm.parent_name} onChange={(e) => setCreateForm({ ...createForm, parent_name: e.target.value })} placeholder="Parent name" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Parent Phone</Label>
+                        <Input value={createForm.parent_phone} onChange={(e) => setCreateForm({ ...createForm, parent_phone: e.target.value })} placeholder="+91 9876543210" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button type="submit" loading={creatingStudent} className="w-full">
+                    <Save className="h-4 w-4" /> Create Student
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
           ) : (
             <Card className="border-dashed">
-              <CardContent className="p-8">
-                <EmptyState icon={<UserRound className="h-10 w-10" />} title="Select a student" description="Click the eye button to view the animated ID card and profile details." />
+              <CardContent className="flex flex-col items-center gap-4 p-8">
+                <EmptyState icon={<UserRound className="h-10 w-10" />} title="Select a student" description="Click the eye button to view the ID card, or create a new student profile." />
+                <Button variant="outline" onClick={openCreateForm}><GraduationCap className="h-4 w-4" /> Add Student Manually</Button>
               </CardContent>
             </Card>
           )}
@@ -398,10 +651,10 @@ export default function StudentsPage() {
 
 function StudentIdCard({ student }: { student: Student }) {
   return (
-    <div className="relative px-5 pt-8">
+    <div className="id-card-hanging relative px-5 pt-8">
       <div className="absolute left-1/2 top-0 h-12 w-px -translate-x-1/2 bg-gray-300" />
-      <div className="absolute left-1/2 top-10 h-4 w-16 -translate-x-1/2 rounded-full border border-gray-200 bg-white shadow-sm" />
-      <Card className="student-id-card overflow-hidden border-indigo-100 bg-white shadow-lg">
+      <div className="id-card-lanyard-clip absolute left-1/2 top-10 h-4 w-16 -translate-x-1/2 rounded-full border border-gray-200 bg-white shadow-sm" />
+      <Card className="id-card-inner student-id-card overflow-hidden border-indigo-100 bg-white shadow-lg">
         <div className="bg-gradient-to-r from-indigo-600 to-blue-600 p-5 text-white">
           <div className="flex items-center gap-4">
             <Avatar src={student.photo_url} name={student.full_name} size="lg" className="ring-4 ring-white/30" />

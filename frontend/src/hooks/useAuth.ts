@@ -63,7 +63,11 @@ export function useAuthState(): AuthState {
   const { user, isLoaded: clerkLoaded, isSignedIn } = useUser();
   const { getToken } = useClerkAuth();
 
-  const [synced, setSynced] = useState(false);
+  // Restore cached sync from sessionStorage to avoid re-calling /auth/sync on every page nav
+  const [synced, setSynced] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!sessionStorage.getItem("_edutrack_sync");
+  });
   const [backendData, setBackendData] = useState<{
     user_id: string;
     role: string;
@@ -73,7 +77,13 @@ export function useAuthState(): AuthState {
     last_name: string | null;
     email: string;
     is_new: boolean;
-  } | null>(null);
+  } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const cached = sessionStorage.getItem("_edutrack_sync");
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
+  });
 
   const syncUser = useCallback(async () => {
     if (!isSignedIn) return;
@@ -81,7 +91,6 @@ export function useAuthState(): AuthState {
     try {
       const token = await getToken();
       if (!token) {
-        // Token not ready — mark synced so UI isn't stuck on loader
         setSynced(true);
         return;
       }
@@ -89,18 +98,19 @@ export function useAuthState(): AuthState {
       const response = await api.post(
         "/auth/sync",
         {},
-        { headers: { Authorization: `Bearer ${token}` }, timeout: 5000 }
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
       );
       setBackendData(response.data);
       setSynced(true);
+      // Persist to sessionStorage so page navigations don't re-sync
+      try { sessionStorage.setItem("_edutrack_sync", JSON.stringify(response.data)); } catch {}
     } catch (err) {
       console.error("Failed to sync user with backend:", err);
-      // Still mark as synced so we don't loop — fallback to Clerk metadata
       setSynced(true);
     }
   }, [isSignedIn, getToken]);
 
-  // Sync on first sign-in
+  // Sync on first sign-in (skip if we have cached data)
   useEffect(() => {
     if (clerkLoaded && isSignedIn && !synced) {
       void Promise.resolve().then(syncUser);

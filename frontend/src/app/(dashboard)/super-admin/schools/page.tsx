@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
@@ -378,13 +379,13 @@ export default function SchoolsPage() {
                   {filtered.map((school) => (
                     <tr key={school.id} className="group hover:bg-gray-50/80">
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
+                        <Link href={`/super-admin/schools/${school.id}`} className="flex items-center gap-3 group/link">
                           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-sm font-bold text-indigo-600">{school.name[0]}</div>
                           <div>
-                            <p className="text-sm font-semibold text-gray-900">{school.name}</p>
+                            <p className="text-sm font-semibold text-gray-900 group-hover/link:text-indigo-600 transition-colors">{school.name}</p>
                             <p className="text-xs text-gray-400">{school.email}</p>
                           </div>
-                        </div>
+                        </Link>
                       </td>
                       <td className="px-6 py-4">
                         <button

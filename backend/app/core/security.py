@@ -4,6 +4,7 @@ from typing import Optional
 
 import httpx
 import jwt
+from jwt.algorithms import RSAAlgorithm
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -71,7 +72,7 @@ async def verify_clerk_token(token: str) -> dict:
         rsa_key = None
         for key in jwks.get("keys", []):
             if key.get("kid") == kid:
-                rsa_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
+                rsa_key = RSAAlgorithm.from_jwk(key)
                 break
 
         if not rsa_key:
