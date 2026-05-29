@@ -18,19 +18,33 @@ from app.core.permissions import get_permissions_for_role
 
 logger = logging.getLogger(__name__)
 
+# Module-level persistent client — reuses TCP/TLS connections across requests
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return the shared httpx client, creating it lazily."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        settings = get_settings()
+        _shared_client = httpx.AsyncClient(
+            base_url="https://api.clerk.com/v1",
+            headers={
+                "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            # Keep connections alive for reuse (HTTP/2 where possible)
+            http2=False,
+        )
+    return _shared_client
+
 
 class ClerkService:
     """Interacts with the Clerk Backend API to manage user metadata."""
 
-    BASE_URL = "https://api.clerk.com/v1"
-
     def __init__(self):
-        settings = get_settings()
-        self.secret_key = settings.CLERK_SECRET_KEY
-        self._headers = {
-            "Authorization": f"Bearer {self.secret_key}",
-            "Content-Type": "application/json",
-        }
+        self._client = _get_client()
 
     # ------------------------------------------------------------------
     # Public API
@@ -38,13 +52,9 @@ class ClerkService:
 
     async def get_user(self, clerk_id: str) -> dict:
         """Fetch a Clerk user by their ID."""
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{self.BASE_URL}/users/{clerk_id}",
-                headers=self._headers,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self._client.get(f"/users/{clerk_id}")
+        resp.raise_for_status()
+        return resp.json()
 
     async def sync_user_metadata(
         self,
@@ -70,21 +80,19 @@ class ClerkService:
 
         payload = {"public_metadata": public_metadata}
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.patch(
-                f"{self.BASE_URL}/users/{clerk_id}",
-                headers=self._headers,
-                json=payload,
+        resp = await self._client.patch(
+            f"/users/{clerk_id}",
+            json=payload,
+        )
+        if resp.status_code != 200:
+            logger.error(
+                "Failed to sync Clerk metadata for %s: %s %s",
+                clerk_id, resp.status_code, resp.text,
             )
-            if resp.status_code != 200:
-                logger.error(
-                    "Failed to sync Clerk metadata for %s: %s %s",
-                    clerk_id, resp.status_code, resp.text,
-                )
-                resp.raise_for_status()
+            resp.raise_for_status()
 
-            logger.info("Synced Clerk metadata for user %s (role=%s)", clerk_id, role)
-            return resp.json()
+        logger.info("Synced Clerk metadata for user %s (role=%s)", clerk_id, role)
+        return resp.json()
 
     async def set_user_role(self, clerk_id: str, role: str, school_id: Optional[str] = None) -> dict:
         """Convenience wrapper: set role and school_id in Clerk metadata."""
@@ -92,11 +100,9 @@ class ClerkService:
 
     async def list_users(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """List Clerk users (for admin user management)."""
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{self.BASE_URL}/users",
-                headers=self._headers,
-                params={"limit": limit, "offset": offset},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self._client.get(
+            "/users",
+            params={"limit": limit, "offset": offset},
+        )
+        resp.raise_for_status()
+        return resp.json()

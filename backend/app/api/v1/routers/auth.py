@@ -196,15 +196,28 @@ async def _apply_role_metadata_to_user(user: User, metadata: dict, db: AsyncSess
     user.school_id = school_id
 
 
-async def _authoritative_clerk_metadata(current: CurrentUser) -> dict:
+# In-memory cache of Clerk metadata per user (avoids external API call on every page nav)
+_clerk_metadata_cache: dict[str, tuple[float, dict]] = {}  # clerk_id -> (timestamp, metadata)
+_CLERK_CACHE_TTL = 300  # 5 minutes
+
+
+async def _authoritative_clerk_metadata(current: CurrentUser, force: bool = False) -> dict:
     """Resolve role metadata from the session token or Clerk Backend API.
 
-    Clerk public metadata is not always present in the session token unless
-    the Clerk JWT/session template includes it. The backend API read is
-    authoritative and keeps existing DB users from getting stuck as students
-    after their Clerk public metadata is changed to an admin role.
+    Caches results for 5 minutes to avoid hitting Clerk on every page nav.
     """
+    import time
+
     metadata = dict(current.metadata or {})
+
+    # Check cache first (skip for forced refreshes)
+    if not force:
+        cached = _clerk_metadata_cache.get(current.clerk_id)
+        if cached:
+            cached_time, cached_meta = cached
+            if time.time() - cached_time < _CLERK_CACHE_TTL:
+                metadata.update(cached_meta)
+                return metadata
 
     try:
         clerk_data = await ClerkService().get_user(current.clerk_id)
@@ -219,6 +232,7 @@ async def _authoritative_clerk_metadata(current: CurrentUser) -> dict:
     )
     if isinstance(public_metadata, dict):
         metadata.update(public_metadata)
+        _clerk_metadata_cache[current.clerk_id] = (time.time(), public_metadata)
     return metadata
 
 
@@ -407,17 +421,21 @@ async def sync_user(
         except Exception as e:
             logger.warning("Could not sync Clerk metadata on provision: %s", e)
     else:
-        await _apply_role_metadata_to_user(user, metadata, db)
-        await db.flush()
-        stmt = (
-            select(User)
-            .options(selectinload(User.role))
-            .where(User.id == user.id)
-        )
-        result = await db.execute(stmt)
-        user = result.scalar_one()
-        if not await _metadata_matches_user(metadata, user, db):
-            await _sync_clerk_metadata_from_user(user)
+        # For existing users, skip the expensive reload + Clerk re-sync
+        # unless metadata actually diverges
+        role_name = _normalize_role_name(user.role.name if user.role else None) or "org:student"
+        metadata_role = _normalize_role_name(metadata.get("role"))
+        if metadata_role and metadata_role != role_name:
+            # Metadata diverged — apply the update
+            await _apply_role_metadata_to_user(user, metadata, db)
+            await db.flush()
+            stmt = (
+                select(User)
+                .options(selectinload(User.role))
+                .where(User.id == user.id)
+            )
+            result = await db.execute(stmt)
+            user = result.scalar_one()
 
     role_name = _normalize_role_name(user.role.name if user.role else None) or "org:student"
     permissions = list(get_permissions_for_role(role_name))

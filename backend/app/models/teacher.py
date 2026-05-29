@@ -38,6 +38,7 @@ class Teacher(TenantModel):
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
+    staff_type: Mapped[Optional[str]] = mapped_column(String(20), default="teaching", server_default="teaching")  # teaching, non_teaching
 
     # Clerk user link
     clerk_user_id: Mapped[Optional[str]] = mapped_column(String(255), index=True)

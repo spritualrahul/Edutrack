@@ -61,14 +61,20 @@ class AuthenticatedUser:
 # ---------------------------------------------------------------------------
 
 async def get_authenticated_user(
+    request: Request,
     current: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AuthenticatedUser:
     """Resolve JWT claims to a database-backed user.
 
-    If the user does not exist in the DB yet, we auto-provision them
-    (just-in-time provisioning via Clerk webhook or first API call).
+    Results are cached in request.state so multiple dependencies that
+    depend on this function only trigger ONE database query per request.
     """
+    # Return cached result if already resolved this request
+    cached = getattr(request.state, "_authenticated_user", None)
+    if cached is not None:
+        return cached
+
     stmt = (
         select(User)
         .options(selectinload(User.role))
@@ -92,7 +98,7 @@ async def get_authenticated_user(
     role_name = normalize_role(user.role.name if user.role else None) or "org:student"
     permissions = get_permissions_for_role(role_name)
 
-    return AuthenticatedUser(
+    authenticated = AuthenticatedUser(
         clerk_id=user.clerk_id,
         user_id=user.id,
         email=user.email,
@@ -104,6 +110,10 @@ async def get_authenticated_user(
         is_active=user.is_active,
         metadata=user.metadata_ or {},
     )
+
+    # Cache on request state
+    request.state._authenticated_user = authenticated
+    return authenticated
 
 
 # ---------------------------------------------------------------------------

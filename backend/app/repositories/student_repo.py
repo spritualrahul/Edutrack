@@ -50,28 +50,64 @@ class StudentRepository:
         return result.scalars().all(), total
 
     async def search_for_fee_counter(self, school_id: uuid.UUID, query: str) -> List[dict]:
+        # Subquery: aggregate pending fees per student in a single pass
+        pending_sub = (
+            select(
+                StudentFeeAllocation.student_id,
+                func.coalesce(
+                    func.sum(
+                        StudentFeeAllocation.total_amount
+                        - StudentFeeAllocation.discount_amount
+                        - StudentFeeAllocation.paid_amount
+                    ),
+                    0,
+                ).label("pending_fees"),
+            )
+            .where(StudentFeeAllocation.status.in_(["pending", "partial", "overdue"]))
+            .group_by(StudentFeeAllocation.student_id)
+            .subquery()
+        )
+
         stmt = (
-            select(Student.id, Student.admission_number, Student.first_name, Student.last_name,
-                   Student.photo_url, AcademicClass.name.label("class_name"), Section.name.label("section_name"),
-                   Parent.primary_phone.label("parent_phone"))
+            select(
+                Student.id,
+                Student.admission_number,
+                Student.first_name,
+                Student.last_name,
+                Student.photo_url,
+                AcademicClass.name.label("class_name"),
+                Section.name.label("section_name"),
+                Parent.primary_phone.label("parent_phone"),
+                func.coalesce(pending_sub.c.pending_fees, 0).label("pending_fees"),
+            )
             .outerjoin(AcademicClass, Student.class_id == AcademicClass.id)
             .outerjoin(Section, Student.section_id == Section.id)
             .outerjoin(Parent, Student.parent_id == Parent.id)
-            .where(Student.school_id == school_id, Student.is_active == True,
-                   (Student.first_name.ilike(f"%{query}%") | Student.admission_number.ilike(f"%{query}%")))
+            .outerjoin(pending_sub, pending_sub.c.student_id == Student.id)
+            .where(
+                Student.school_id == school_id,
+                Student.is_active == True,
+                (
+                    Student.first_name.ilike(f"%{query}%")
+                    | Student.admission_number.ilike(f"%{query}%")
+                ),
+            )
             .limit(10)
         )
         result = await self.db.execute(stmt)
-        rows = result.all()
-        students = []
-        for row in rows:
-            pending_q = select(func.coalesce(func.sum(StudentFeeAllocation.total_amount - StudentFeeAllocation.discount_amount - StudentFeeAllocation.paid_amount), 0)).where(
-                StudentFeeAllocation.student_id == row.id, StudentFeeAllocation.status.in_(["pending", "partial", "overdue"]))
-            pending = (await self.db.execute(pending_q)).scalar()
-            students.append({"id": row.id, "admission_number": row.admission_number, "full_name": f"{row.first_name} {row.last_name or ''}".strip(),
-                             "class_name": row.class_name or "", "section_name": row.section_name, "parent_phone": row.parent_phone,
-                             "photo_url": row.photo_url, "pending_fees": pending or Decimal("0")})
-        return students
+        return [
+            {
+                "id": row.id,
+                "admission_number": row.admission_number,
+                "full_name": f"{row.first_name} {row.last_name or ''}".strip(),
+                "class_name": row.class_name or "",
+                "section_name": row.section_name,
+                "parent_phone": row.parent_phone,
+                "photo_url": row.photo_url,
+                "pending_fees": row.pending_fees or Decimal("0"),
+            }
+            for row in result.all()
+        ]
 
     async def update(self, student_id: uuid.UUID, school_id: uuid.UUID, **kwargs) -> Optional[Student]:
         student = await self.get_by_id(student_id, school_id)

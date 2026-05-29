@@ -5,13 +5,19 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.audit import log_audit_event
 from app.core.auth import AuthenticatedUser, get_authenticated_user, require_roles
 from app.db.session import get_db
 from app.models.organization import Organization
+from app.models.student import Student
+from app.models.teacher import Teacher
+from app.models.academic import AcademicClass, Section
+from app.models.parent import Parent
 from app.repositories.organization_repo import OrganizationRepository
 from app.schemas.schemas import (OrganizationCreate, OrganizationUpdate, OrganizationResponse,
                                   PaginatedResponse, SubscriptionCheckoutRequest,
@@ -315,3 +321,183 @@ async def deactivate_organization(
         ip_address=request.client.host if request.client else None,
     )
     return {"success": True, "message": "School deactivated"}
+
+
+# ---------------------------------------------------------------------------
+# Super-admin: school member drill-down
+# ---------------------------------------------------------------------------
+
+def _serialize_student_for_admin(student: Student) -> dict:
+    """Serialize a student for the super-admin view."""
+    return {
+        "id": str(student.id),
+        "admission_number": student.admission_number,
+        "first_name": student.first_name,
+        "last_name": student.last_name,
+        "full_name": student.full_name,
+        "date_of_birth": str(student.date_of_birth) if student.date_of_birth else None,
+        "gender": student.gender,
+        "blood_group": student.blood_group,
+        "photo_url": student.photo_url,
+        "email": student.email,
+        "phone": student.phone,
+        "address": student.address,
+        "class_name": student.academic_class.name if student.academic_class else None,
+        "section_name": student.section.name if student.section else None,
+        "roll_number": student.roll_number,
+        "admission_date": str(student.admission_date) if student.admission_date else None,
+        "status": student.status,
+        "parent_name": student.parent.primary_contact_name if student.parent else None,
+        "parent_phone": student.parent.primary_phone if student.parent else None,
+        "father_name": student.parent.father_name if student.parent else None,
+        "mother_name": student.parent.mother_name if student.parent else None,
+    }
+
+
+def _serialize_teacher_for_admin(teacher: Teacher) -> dict:
+    """Serialize a teacher for the super-admin view."""
+    return {
+        "id": str(teacher.id),
+        "employee_id": teacher.employee_id,
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
+        "full_name": teacher.full_name,
+        "email": teacher.email,
+        "phone": teacher.phone,
+        "date_of_birth": str(teacher.date_of_birth) if teacher.date_of_birth else None,
+        "gender": teacher.gender,
+        "photo_url": teacher.photo_url,
+        "address": teacher.address,
+        "designation": teacher.designation,
+        "department": teacher.department,
+        "qualification": teacher.qualification,
+        "experience_years": teacher.experience_years,
+        "joining_date": str(teacher.joining_date) if teacher.joining_date else None,
+        "specialization": teacher.specialization,
+        "status": teacher.status,
+        "is_active": teacher.is_active,
+        "staff_type": teacher.staff_type or "teaching",
+    }
+
+
+@router.get("/{org_id}/students")
+async def list_school_students(
+    org_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(require_roles("org:super_admin")),
+):
+    """List all students for a school (super-admin only)."""
+    # Verify the org exists
+    repo = OrganizationRepository(db)
+    org = await repo.get_by_id(org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    query = select(Student).where(Student.school_id == org_id)
+    if search:
+        query = query.where(
+            Student.first_name.ilike(f"%{search}%")
+            | Student.last_name.ilike(f"%{search}%")
+            | Student.admission_number.ilike(f"%{search}%")
+        )
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.options(
+        selectinload(Student.academic_class),
+        selectinload(Student.section),
+        selectinload(Student.parent),
+    ).order_by(Student.first_name).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    students = result.scalars().all()
+
+    return {
+        "items": [_serialize_student_for_admin(s) for s in students],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+
+
+@router.get("/{org_id}/teachers")
+async def list_school_teachers(
+    org_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(require_roles("org:super_admin")),
+):
+    """List all teachers for a school (super-admin only)."""
+    repo = OrganizationRepository(db)
+    org = await repo.get_by_id(org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    query = select(Teacher).where(Teacher.school_id == org_id).where(
+        (Teacher.staff_type == "teaching") | (Teacher.staff_type.is_(None))
+    )
+    if search:
+        query = query.where(
+            Teacher.first_name.ilike(f"%{search}%")
+            | Teacher.last_name.ilike(f"%{search}%")
+            | Teacher.employee_id.ilike(f"%{search}%")
+        )
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(Teacher.first_name).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    teachers = result.scalars().all()
+
+    return {
+        "items": [_serialize_teacher_for_admin(t) for t in teachers],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+
+
+@router.get("/{org_id}/staff")
+async def list_school_staff(
+    org_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(require_roles("org:super_admin")),
+):
+    """List all non-teaching staff for a school (super-admin only)."""
+    repo = OrganizationRepository(db)
+    org = await repo.get_by_id(org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    query = select(Teacher).where(
+        Teacher.school_id == org_id, Teacher.staff_type == "non_teaching"
+    )
+    if search:
+        query = query.where(
+            Teacher.first_name.ilike(f"%{search}%")
+            | Teacher.last_name.ilike(f"%{search}%")
+            | Teacher.employee_id.ilike(f"%{search}%")
+        )
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(Teacher.first_name).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    staff = result.scalars().all()
+
+    return {
+        "items": [_serialize_teacher_for_admin(s) for s in staff],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }

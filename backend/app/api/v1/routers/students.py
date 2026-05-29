@@ -21,6 +21,39 @@ from app.schemas.schemas import (StudentCreate, StudentUpdate, StudentResponse,
 router = APIRouter(prefix="/schools/{school_id}/students", tags=["Students"])
 
 
+@router.get("/classes")
+async def list_classes_for_school(
+    school_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(require_roles("org:super_admin", "org:school_admin")),
+    _school: AuthenticatedUser = Depends(require_school_access()),
+):
+    """List all active classes and their sections for a school.
+
+    Used by the create-student form to populate class/section dropdowns.
+    """
+    result = await db.execute(
+        select(AcademicClass)
+        .options(selectinload(AcademicClass.sections))
+        .where(AcademicClass.school_id == school_id, AcademicClass.is_active == True)
+        .order_by(AcademicClass.sort_order, AcademicClass.numeric_grade)
+    )
+    classes = result.scalars().all()
+    return [
+        {
+            "id": cls.id,
+            "name": cls.name,
+            "numeric_grade": cls.numeric_grade,
+            "sections": [
+                {"id": sec.id, "name": sec.name}
+                for sec in cls.sections
+                if sec.is_active
+            ],
+        }
+        for cls in classes
+    ]
+
+
 @router.get("", response_model=PaginatedResponse)
 async def list_students(
     school_id: uuid.UUID, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
@@ -46,8 +79,18 @@ async def create_student(
     current_user: AuthenticatedUser = Depends(require_roles("org:super_admin", "org:school_admin")),
     _school: AuthenticatedUser = Depends(require_school_access()),
 ):
+    student_data = data.model_dump(exclude={"parent_name", "parent_phone"})
+
+    # Auto-create parent if inline parent details are provided
+    if not student_data.get("parent_id") and data.parent_name and data.parent_phone:
+        parent_id = await _upsert_parent(db, school_id, {
+            "parent_name": data.parent_name,
+            "parent_phone": data.parent_phone,
+        })
+        student_data["parent_id"] = parent_id
+
     repo = StudentRepository(db)
-    student = await repo.create(school_id, **data.model_dump())
+    student = await repo.create(school_id, **student_data)
     return _serialize_student(student)
 
 

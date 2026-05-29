@@ -162,6 +162,9 @@ class StudentCreate(BaseModel):
     state: Optional[str] = None
     pincode: Optional[str] = None
     parent_id: Optional[uuid.UUID] = None
+    # Inline parent creation (used by the manual create form)
+    parent_name: Optional[str] = None
+    parent_phone: Optional[str] = None
 
 
 class StudentUpdate(BaseModel):

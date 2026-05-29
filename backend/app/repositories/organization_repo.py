@@ -137,61 +137,71 @@ class OrganizationRepository:
         }
 
     async def get_all_stats(self) -> dict:
-        """Get platform-wide statistics for super admin."""
-        total_schools = (
-            await self.db.execute(select(func.count(Organization.id)))
-        ).scalar()
-        active_schools = (
-            await self.db.execute(
+        """Get platform-wide statistics for super admin.
+
+        All queries run in parallel for maximum speed.
+        """
+        import asyncio
+
+        async def _count_schools():
+            return (await self.db.execute(select(func.count(Organization.id)))).scalar() or 0
+
+        async def _count_active():
+            return (await self.db.execute(
                 select(func.count(Organization.id)).where(Organization.is_active == True)
-            )
-        ).scalar()
-        total_students = (
-            await self.db.execute(
+            )).scalar() or 0
+
+        async def _count_students():
+            return (await self.db.execute(
                 select(func.count(Student.id)).where(Student.is_active == True)
-            )
-        ).scalar()
-        total_teachers = (
-            await self.db.execute(
+            )).scalar() or 0
+
+        async def _count_teachers():
+            return (await self.db.execute(
                 select(func.count(Teacher.id)).where(Teacher.is_active == True)
-            )
-        ).scalar()
-        total_revenue = (
-            await self.db.execute(
+            )).scalar() or 0
+
+        async def _total_revenue():
+            return (await self.db.execute(
                 select(func.coalesce(func.sum(SubscriptionPayment.amount), 0)).where(
                     SubscriptionPayment.status == "completed"
                 )
-            )
-        ).scalar()
-        today = date.today()
-        monthly_revenue = (
-            await self.db.execute(
+            )).scalar() or 0
+
+        async def _monthly_revenue():
+            today = date.today()
+            return (await self.db.execute(
                 select(func.coalesce(func.sum(SubscriptionPayment.amount), 0)).where(
                     SubscriptionPayment.status == "completed",
                     func.extract("year", SubscriptionPayment.created_at) == today.year,
                     func.extract("month", SubscriptionPayment.created_at) == today.month,
                 )
-            )
-        ).scalar()
-        plan_rows = (
-            await self.db.execute(
-                select(
-                    SubscriptionPlan.name,
-                    func.count(Organization.id),
-                )
+            )).scalar() or 0
+
+        async def _plan_distribution():
+            return (await self.db.execute(
+                select(SubscriptionPlan.name, func.count(Organization.id))
                 .join(Organization, Organization.subscription_plan_id == SubscriptionPlan.id, isouter=True)
                 .group_by(SubscriptionPlan.name)
                 .order_by(SubscriptionPlan.name)
-            )
-        ).all()
+            )).all()
+
+        (
+            total_schools, active_schools, total_students,
+            total_teachers, total_revenue, monthly_revenue, plan_rows,
+        ) = await asyncio.gather(
+            _count_schools(), _count_active(), _count_students(),
+            _count_teachers(), _total_revenue(), _monthly_revenue(),
+            _plan_distribution(),
+        )
 
         return {
-            "total_schools": total_schools or 0,
-            "active_schools": active_schools or 0,
-            "total_students": total_students or 0,
-            "total_teachers": total_teachers or 0,
-            "total_revenue": total_revenue or 0,
-            "monthly_revenue": monthly_revenue or 0,
+            "total_schools": total_schools,
+            "active_schools": active_schools,
+            "total_students": total_students,
+            "total_teachers": total_teachers,
+            "total_revenue": total_revenue,
+            "monthly_revenue": monthly_revenue,
             "schools_by_plan": {name: count for name, count in plan_rows},
         }
 
